@@ -1,9 +1,12 @@
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from re import X
 from sc2.bot_ai import BotAI, Race
 from sc2.data import AbilityId, Result
-
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.unit import BuffId
+from behavior.speedmining import compute_speed_mining_positions, speed_mine_worker
 
 class CompetitiveBot(BotAI):
     NAME: str = "Crawler"
@@ -31,6 +34,17 @@ class CompetitiveBot(BotAI):
         This code runs every step of the game.
         Do things here during the game.
         """
+        # 1. Compute the speed mining positions at the start
+        # Assuming that expansions are the base locations and each base has a resource list
+        expansions = self.townhalls
+        worker_radius = 0.5  # You may need to adjust this value
+        speed_mining_positions = compute_speed_mining_positions(expansions, worker_radius)
+
+        # 2. Assign speed mining to the workers
+        # Apply speed mining behavior to workers (only when they are gathering)
+        for worker in self.units.of_type([UnitTypeId.DRONE, UnitTypeId.OVERLORD]):  # Adjust unit types if needed
+            speed_mine_worker(worker, speed_mining_positions)
+
         #builds spawning pool on 12 supply
         if self.supply_used >= 12:
             if self.structures(UnitTypeId.SPAWNINGPOOL).amount + self.already_pending(UnitTypeId.SPAWNINGPOOL) == 0:
