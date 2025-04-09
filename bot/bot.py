@@ -1,25 +1,23 @@
 from re import X
 from sc2.bot_ai import BotAI, Race
 from sc2.data import AbilityId, Result
-
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.unit import BuffId
 from sc2.units import Units
-from .speedmining import SpeedMining
-from .mapcleanup import Cleanup
+from bot.speedmining import SpeedMining
+from bot.mapcleanup import Cleanup
+import time
 
 class CompetitiveBot(BotAI):
     NAME: str = "Crawler"
     """This bot's name"""
 
     RACE: Race = Race.Zerg
-    """This bot's Starcraft 2 race.
-    Options are:
-        Race.Terran
-        Race.Zerg
-        Race.Protoss
-        Race.Random
-    """
+    """This bot's Starcraft 2 race."""
+
+    def __init__(self):
+        super().__init__()
+        self.production_pauses = {}  # Dict to store production pauses with end times
 
     async def on_start(self):
         """
@@ -44,6 +42,62 @@ class CompetitiveBot(BotAI):
         for i, worker in enumerate(workers):
             target_mf = mineral_fields[i % len(mineral_fields)]
             worker.gather(target_mf)
+
+    def add_production_pause(self, unit_type: UnitTypeId, duration_seconds: float = None, until_structure: UnitTypeId = None):
+        """Add a production pause for a specific unit type.
+        
+        Args:
+            unit_type: The unit type to pause production for
+            duration_seconds: Optional duration in seconds
+            until_structure: Optional structure to wait for before resuming
+        """
+        current_time = time.time()
+        
+        # Initialize list of pauses for this unit type if it doesn't exist
+        if unit_type not in self.production_pauses:
+            self.production_pauses[unit_type] = []
+            
+        # Add the new pause condition
+        pause_info = {}
+        if duration_seconds:
+            pause_info['end_time'] = current_time + duration_seconds
+        else:
+            pause_info['end_time'] = float('inf')
+            
+        if until_structure:
+            pause_info['wait_for_structure'] = until_structure
+            
+        self.production_pauses[unit_type].append(pause_info)
+
+    def is_production_paused(self, unit_type: UnitTypeId) -> bool:
+        """Check if production is paused for a unit type."""
+        if unit_type not in self.production_pauses:
+            return False
+            
+        current_time = time.time()
+        active_pauses = []
+        
+        # Check each pause condition
+        for pause_info in self.production_pauses[unit_type]:
+            is_paused = False
+            
+            # Check time-based pause
+            if current_time < pause_info.get('end_time', float('inf')):
+                is_paused = True
+                
+            # Check structure-based pause
+            if 'wait_for_structure' in pause_info:
+                if not self.structures(pause_info['wait_for_structure']).ready:
+                    is_paused = True
+                    
+            if is_paused:
+                active_pauses.append(pause_info)
+                
+        # Update the list to only include active pauses
+        self.production_pauses[unit_type] = active_pauses
+        
+        # Production is paused if there are any active pauses
+        return len(active_pauses) > 0
 
     async def on_step(self, iteration: int):
         """
@@ -72,11 +126,18 @@ class CompetitiveBot(BotAI):
         if self.supply_left <= 3 and self.supply_used != 200 and self.already_pending(UnitTypeId.OVERLORD) == 0 and self.larva:
             self.train(UnitTypeId.OVERLORD, 1)  # Only make one overlord at a time
 
-        #build zerglings
-        if self.structures(UnitTypeId.SPAWNINGPOOL).ready and self.larva:
+        #build zerglings if not paused
+        if (self.structures(UnitTypeId.SPAWNINGPOOL).ready and self.larva and 
+            not self.is_production_paused(UnitTypeId.ZERGLING)):
             if self.supply_left <= 2 and self.already_pending(UnitTypeId.OVERLORD) == 0:
                 return  # Don't make zerglings if supply is low and no overlord is being built
             self.train(UnitTypeId.ZERGLING, self.larva.amount)
+
+        # Build mutalisks when spire is ready
+        if (self.structures(UnitTypeId.SPIRE).ready and self.larva and 
+            self.can_afford(UnitTypeId.MUTALISK) and 
+            self.units(UnitTypeId.MUTALISK).amount < 5):
+            self.train(UnitTypeId.MUTALISK)
 
         # time to attack
         if not hasattr(self, "totalattacks"):
@@ -84,7 +145,7 @@ class CompetitiveBot(BotAI):
             self.attacked = False
             self.last_attack_frame = 0
 
-        excluded_types = [UnitTypeId.OVERLORD, UnitTypeId.DRONE, UnitTypeId.QUEEN, UnitTypeId.LARVA, UnitTypeId.OVERSEER]
+        excluded_types = [UnitTypeId.OVERLORD, UnitTypeId.DRONE, UnitTypeId.QUEEN, UnitTypeId.LARVA, UnitTypeId.OVERSEER, UnitTypeId.MUTALISK]
         army = self.units.exclude_type(excluded_types)
 
         # attack cooldown in game frames (22.4 frames per second)
@@ -99,7 +160,6 @@ class CompetitiveBot(BotAI):
             await self.chat_send(f"Attack {self.totalattacks}")
             self.totalattacks += 1
             self.last_attack_frame = self.time * 22.4
-
 
         #train queen
         if self.structures(UnitTypeId.SPAWNINGPOOL).ready and self.units(UnitTypeId.QUEEN).amount == 0 and self.already_pending(UnitTypeId.QUEEN) == 0:
@@ -117,8 +177,21 @@ class CompetitiveBot(BotAI):
             if natural:
                 await self.build(UnitTypeId.HATCHERY, near=natural)
 
-                
-    pass
+        # Build lair if we have enough resources and cleanup mode is active
+        if (self.cleanup.cleanup_mode_active and self.can_afford(UnitTypeId.LAIR) and 
+            self.structures(UnitTypeId.SPAWNINGPOOL).ready):
+            hq = self.townhalls.first
+            if not self.structures(UnitTypeId.LAIR).amount and not self.already_pending(UnitTypeId.LAIR):
+                hq.build(UnitTypeId.LAIR)
+
+        # Build spire when lair is ready
+        if self.structures(UnitTypeId.LAIR).ready:
+            if not self.structures(UnitTypeId.SPIRE).amount and not self.already_pending(UnitTypeId.SPIRE):
+                # Calculate position 4 distance away from our base
+                our_base = self.townhalls.first.position
+                enemy_base = self.enemy_start_locations[0]
+                spire_position = our_base.towards(enemy_base, 4)
+                await self.build(UnitTypeId.SPIRE, near=spire_position)
 
     async def on_end(self, result: Result):
         """
