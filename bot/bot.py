@@ -1,12 +1,12 @@
-import sys
-import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from re import X
 from sc2.bot_ai import BotAI, Race
 from sc2.data import AbilityId, Result
+
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.unit import BuffId
-from behavior.speedmining import compute_speed_mining_positions, speed_mine_worker
+from sc2.units import Units
+from .speedmining import SpeedMining
+from .mapcleanup import Cleanup
 
 class CompetitiveBot(BotAI):
     NAME: str = "Crawler"
@@ -28,27 +28,45 @@ class CompetitiveBot(BotAI):
         """
         print("Game started")
         await self.chat_send("GL HF!")
+        # Initialize speed mining
+        self.speed_mining = SpeedMining(self)
+        # Initialize cleanup
+        self.cleanup = Cleanup(self)
+        # Distribute workers to minerals
+        self.distribute_workers_initially()
     
+    def distribute_workers_initially(self):
+        """Distribute workers evenly among mineral patches at game start."""
+        workers = self.workers
+        mineral_fields = self.mineral_field.closer_than(10, self.townhalls.first)
+        
+        # Assign each worker to a mineral field, cycling through the fields
+        for i, worker in enumerate(workers):
+            target_mf = mineral_fields[i % len(mineral_fields)]
+            worker.gather(target_mf)
+
     async def on_step(self, iteration: int):
         """
         This code runs every step of the game.
         Do things here during the game.
         """
-        # 1. Compute the speed mining positions at the start
-        # Assuming that expansions are the base locations and each base has a resource list
-        expansions = self.townhalls
-        worker_radius = 0.5  # You may need to adjust this value
-        speed_mining_positions = compute_speed_mining_positions(expansions, worker_radius)
+        # Update speed mining
+        self.speed_mining.update()
+        # Update cleanup
+        await self.cleanup.update()
 
-        # 2. Assign speed mining to the workers
-        # Apply speed mining behavior to workers (only when they are gathering)
-        for worker in self.units.of_type([UnitTypeId.DRONE, UnitTypeId.OVERLORD]):  # Adjust unit types if needed
-            speed_mine_worker(worker, speed_mining_positions)
-
-        #builds spawning pool on 12 supply
+        #builds spawning pool on 12 supply, positioned towards enemy base
         if self.supply_used >= 12:
             if self.structures(UnitTypeId.SPAWNINGPOOL).amount + self.already_pending(UnitTypeId.SPAWNINGPOOL) == 0:
-                await self.build(UnitTypeId.SPAWNINGPOOL, near=self.townhalls.first)
+                # Get positions
+                our_base = self.townhalls.first.position
+                enemy_base = self.enemy_start_locations[0]
+                
+                # Calculate position 6 distance away from our base towards enemy base
+                pool_position = our_base.towards(enemy_base, 6)
+                
+                # Try to find a valid placement near our calculated position
+                await self.build(UnitTypeId.SPAWNINGPOOL, near=pool_position)
 
         #build overlord
         if self.supply_left <= 3 and self.supply_used != 200 and self.already_pending(UnitTypeId.OVERLORD) == 0 and self.larva:
@@ -92,6 +110,13 @@ class CompetitiveBot(BotAI):
             for queen in self.units(UnitTypeId.QUEEN).idle:
                 if queen.energy >= 25 and not self.townhalls.first.has_buff(BuffId.QUEENSPAWNLARVATIMER):
                     queen(AbilityId.EFFECT_INJECTLARVA, self.townhalls.first)
+
+        #build hatchery when minerals are available and drones are present
+        if self.minerals >= 400 and self.units(UnitTypeId.DRONE).amount > 1:
+            natural = await self.get_next_expansion()
+            if natural:
+                await self.build(UnitTypeId.HATCHERY, near=natural)
+
                 
     pass
 
