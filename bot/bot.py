@@ -7,6 +7,10 @@ from sc2.units import Units
 from bot.speedmining import SpeedMining
 from bot.mapcleanup import Cleanup
 import time
+import json
+import csv
+import os
+from datetime import datetime
 
 class CompetitiveBot(BotAI):
     NAME: str = "Crawler"
@@ -18,6 +22,54 @@ class CompetitiveBot(BotAI):
     def __init__(self):
         super().__init__()
         self.production_pauses = {}  # Dict to store production pauses with end times
+        self.start_time = None
+        self.stats_file = os.path.join(os.path.dirname(__file__), "data", "opponent_stats.json")
+        self.history_file = os.path.join(os.path.dirname(__file__), "data", "match_history.csv")
+        self.opponent_stats = self.load_opponent_stats()
+
+    def load_opponent_stats(self) -> dict:
+        """Load opponent statistics from JSON file."""
+        if os.path.exists(self.stats_file):
+            with open(self.stats_file, 'r') as f:
+                return json.load(f)
+        return {}
+
+    def save_opponent_stats(self):
+        """Save opponent statistics to JSON file."""
+        with open(self.stats_file, 'w') as f:
+            json.dump(self.opponent_stats, f, indent=2)
+
+    def log_match_history(self, result: Result):
+        """Log match details to CSV file."""
+        # Create header if file doesn't exist
+        write_header = not os.path.exists(self.history_file)
+        
+        with open(self.history_file, 'a', newline='') as f:
+            writer = csv.writer(f)
+            if write_header:
+                writer.writerow(['timestamp', 'opponent_name', 'opponent_race', 'map_name', 'result', 'game_duration_seconds', 'total_attacks'])
+            
+            writer.writerow([
+                datetime.now().isoformat(),
+                self.opponent_id,
+                str(self.enemy_race),
+                self.game_info.map_name,
+                str(result),
+                int(time.time() - self.start_time) if self.start_time else 0,
+                getattr(self, "totalattacks", 0)
+            ])
+
+    def update_opponent_stats(self, result: Result):
+        """Update opponent statistics."""
+        if self.opponent_id not in self.opponent_stats:
+            self.opponent_stats[self.opponent_id] = {"wins": 0, "losses": 0}
+        
+        if result == Result.Victory:
+            self.opponent_stats[self.opponent_id]["wins"] += 1
+        elif result == Result.Defeat:
+            self.opponent_stats[self.opponent_id]["losses"] += 1
+        
+        self.save_opponent_stats()
 
     async def on_start(self):
         """
@@ -25,12 +77,19 @@ class CompetitiveBot(BotAI):
         Do things here before the game starts
         """
         print("Game started")
-        await self.chat_send("GL HF!")
-        # Initialize speed mining
+        self.start_time = time.time()
+        
+        # Get opponent stats
+        stats = self.opponent_stats.get(self.opponent_id, {"wins": 0, "losses": 0})
+        total_games = stats["wins"] + stats["losses"]
+        winrate = (stats["wins"] / total_games * 100) if total_games > 0 else 0
+        
+        # Send winrate message
+        await self.chat_send(f"GL HF! Winrate {winrate:.1f}% ({stats['wins']}-{stats['losses']})")
+        
+        # Initialize components
         self.speed_mining = SpeedMining(self)
-        # Initialize cleanup
         self.cleanup = Cleanup(self)
-        # Distribute workers to minerals
         self.distribute_workers_initially()
     
     def distribute_workers_initially(self):
@@ -199,3 +258,8 @@ class CompetitiveBot(BotAI):
         Do things here after the game ends
         """
         print("Game ended.")
+        # Log match history
+        self.log_match_history(result)
+        
+        # Update opponent stats
+        self.update_opponent_stats(result)
