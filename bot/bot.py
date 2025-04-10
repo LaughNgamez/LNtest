@@ -23,8 +23,9 @@ class CompetitiveBot(BotAI):
         super().__init__()
         self.production_pauses = {}  # Dict to store production pauses with end times
         self.start_time = None
-        self.stats_file = os.path.join(os.path.dirname(__file__), "data", "opponent_stats.json")
-        self.history_file = os.path.join(os.path.dirname(__file__), "data", "match_history.csv")
+        # Move up one directory from __file__ using os.path.dirname twice
+        self.stats_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "opponent_stats.json")
+        self.history_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "match_history.csv")
         self.opponent_stats = self.load_opponent_stats()
 
     def load_opponent_stats(self) -> dict:
