@@ -1,6 +1,11 @@
 {
   "Terran_VeryHard": {
-    "wins": 2,
-    "losses": 12
+    "wins": 4,
+    "losses": 12,
+    "name": "Terran_VeryHard"
+  },
+  "0f184729-b618-47b7-976b-964da08f53ed": {
+    "wins": 1,
+    "losses": 0
   }
 }

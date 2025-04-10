@@ -13,3 +13,6 @@ timestamp,opponent_name,opponent_race,map_name,result,game_duration_seconds,tota
 2025-04-09T16:51:47.389768,Terran_VeryHard,Race.Terran,Ephemeron AIE,Result.Defeat,0,0
 2025-04-09T17:01:53.846173,Terran_VeryHard,Race.Terran,Ephemeron AIE,Result.Defeat,20,1
 2025-04-09T17:21:44.623885,Terran_VeryHard,Race.Terran,Ephemeron AIE,Result.Victory,34,4
+2025-04-10T02:19:53.816078,0f184729-b618-47b7-976b-964da08f53ed,Race.Zerg,Abyssal Reef AIE,Result.Victory,98,5
+2025-04-09T19:41:00.203490,Terran_VeryHard,Terran_VeryHard,Race.Terran,Ephemeron AIE,Result.Victory,44,5
+2025-04-09T19:42:08.661485,Terran_VeryHard,Terran_VeryHard,Race.Terran,Ephemeron AIE,Result.Victory,46,6

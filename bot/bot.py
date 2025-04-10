@@ -27,6 +27,8 @@ class CompetitiveBot(BotAI):
         self.stats_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "opponent_stats.json")
         self.history_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "match_history.csv")
         self.opponent_stats = self.load_opponent_stats()
+        self.zergling_rally_point = None
+        self.opponent_name = None
 
     def load_opponent_stats(self) -> dict:
         """Load opponent statistics from JSON file."""
@@ -48,11 +50,12 @@ class CompetitiveBot(BotAI):
         with open(self.history_file, 'a', newline='') as f:
             writer = csv.writer(f)
             if write_header:
-                writer.writerow(['timestamp', 'opponent_name', 'opponent_race', 'map_name', 'result', 'game_duration_seconds', 'total_attacks'])
+                writer.writerow(['timestamp', 'opponent_id', 'opponent_name', 'opponent_race', 'map_name', 'result', 'game_duration_seconds', 'total_attacks'])
             
             writer.writerow([
                 datetime.now().isoformat(),
                 self.opponent_id,
+                self.opponent_name or "Unknown",
                 str(self.enemy_race),
                 self.game_info.map_name,
                 str(result),
@@ -63,13 +66,19 @@ class CompetitiveBot(BotAI):
     def update_opponent_stats(self, result: Result):
         """Update opponent statistics."""
         if self.opponent_id not in self.opponent_stats:
-            self.opponent_stats[self.opponent_id] = {"wins": 0, "losses": 0}
+            self.opponent_stats[self.opponent_id] = {
+                "name": self.opponent_name or "Unknown",
+                "wins": 0, 
+                "losses": 0
+            }
         
         if result == Result.Victory:
             self.opponent_stats[self.opponent_id]["wins"] += 1
         elif result == Result.Defeat:
             self.opponent_stats[self.opponent_id]["losses"] += 1
         
+        # Always update name in case it changed
+        self.opponent_stats[self.opponent_id]["name"] = self.opponent_name or "Unknown"
         self.save_opponent_stats()
 
     async def on_start(self):
@@ -80,8 +89,11 @@ class CompetitiveBot(BotAI):
         print("Game started")
         self.start_time = time.time()
         
+        # Get opponent name from opponent_id or use "Computer" for AI
+        self.opponent_name = self.opponent_id if not self.opponent_id.startswith("Computer") else "Computer"
+        
         # Get opponent stats
-        stats = self.opponent_stats.get(self.opponent_id, {"wins": 0, "losses": 0})
+        stats = self.opponent_stats.get(self.opponent_id, {"name": self.opponent_name, "wins": 0, "losses": 0})
         total_games = stats["wins"] + stats["losses"]
         winrate = (stats["wins"] / total_games * 100) if total_games > 0 else 0
         
@@ -169,6 +181,17 @@ class CompetitiveBot(BotAI):
         # Update cleanup
         await self.cleanup.update()
         
+        # Calculate zergling rally point if not set
+        if not self.zergling_rally_point and self.townhalls.amount >= 2:
+            natural = min(self.townhalls, key=lambda th: th.distance_to(self.start_location) if th.position != self.start_location else float('inf'))
+            if natural and natural.position != self.start_location:
+                self.zergling_rally_point = natural.position.towards(self.enemy_start_locations[0], 5)
+        
+        # Send newly spawned zerglings to rally point
+        if self.zergling_rally_point:
+            for zergling in self.units(UnitTypeId.ZERGLING).idle:
+                zergling.move(self.zergling_rally_point)
+
         # Assign workers to gas
         for assimilator in self.gas_buildings.ready:
             if assimilator.assigned_harvesters < assimilator.ideal_harvesters:
