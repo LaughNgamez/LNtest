@@ -167,6 +167,33 @@ class CompetitiveBot(BotAI):
         self.speed_mining.on_step()
         # Update cleanup
         await self.cleanup.update()
+        
+        # Assign workers to gas
+        for assimilator in self.gas_buildings.ready:
+            if assimilator.assigned_harvesters < assimilator.ideal_harvesters:
+                # First try to find idle workers
+                workers = self.workers.filter(
+                    lambda w: not w.is_carrying_vespene and 
+                             not w.is_carrying_minerals and 
+                             (not w.orders or w.is_idle)
+                )
+                
+                # If no idle workers, get mineral workers
+                if not workers:
+                    workers = self.workers.filter(
+                        lambda w: not w.is_carrying_vespene and
+                                w.orders and
+                                w.orders[0].ability.id in [AbilityId.HARVEST_GATHER] and
+                                isinstance(w.orders[0].target, int) and
+                                self.mineral_field.find_by_tag(w.orders[0].target) is not None
+                    )
+                
+                if workers:  # If we have any workers (idle or mineral)
+                    # Take up to 3 workers
+                    needed = min(assimilator.ideal_harvesters - assimilator.assigned_harvesters, 3)
+                    for _ in range(needed):
+                        if workers:
+                            workers.random.gather(assimilator)
 
         #builds spawning pool on 12 supply, positioned towards enemy base
         if self.supply_used >= 12:
