@@ -1,16 +1,17 @@
-from re import X
-from sc2.bot_ai import BotAI, Race
-from sc2.data import AbilityId, Result
+from sc2.bot_ai import BotAI
+from sc2.data import Race, Result
 from sc2.ids.unit_typeid import UnitTypeId
-from sc2.unit import BuffId
+from sc2.ids.buff_id import BuffId
+from sc2.ids.ability_id import AbilityId
+from sc2.unit import Unit
 from sc2.units import Units
-from bot.speedmining import SpeedMining
-from bot.mapcleanup import Cleanup
-import time
 import json
-import csv
 import os
+import time
+import csv
 from datetime import datetime
+from .mapcleanup import Cleanup
+from .speedmining import SpeedMining
 
 class CompetitiveBot(BotAI):
     NAME: str = "Crawler"
@@ -31,6 +32,7 @@ class CompetitiveBot(BotAI):
         self.opponent_name = None
         self.expansion_cooldown = 0
         self.totalattacks = 0  # Initialize attack counter
+        self.last_thing_killed_at = time.time()  # Track when the last unit/building was destroyed
 
     def load_opponent_stats(self) -> dict:
         """Load opponent statistics from JSON file."""
@@ -150,31 +152,25 @@ class CompetitiveBot(BotAI):
         """Check if production is paused for a unit type."""
         if unit_type not in self.production_pauses:
             return False
-            
+        
         current_time = time.time()
-        active_pauses = []
+        pause_end_time = self.production_pauses[unit_type]
         
-        # Check each pause condition
-        for pause_info in self.production_pauses[unit_type]:
-            is_paused = False
+        if current_time >= pause_end_time:
+            # Remove expired pause
+            del self.production_pauses[unit_type]
+            return False
             
-            # Check time-based pause
-            if current_time < pause_info.get('end_time', float('inf')):
-                is_paused = True
-                
-            # Check structure-based pause
-            if 'wait_for_structure' in pause_info:
-                if not self.structures(pause_info['wait_for_structure']).ready:
-                    is_paused = True
-                    
-            if is_paused:
-                active_pauses.append(pause_info)
-                
-        # Update the list to only include active pauses
-        self.production_pauses[unit_type] = active_pauses
-        
-        # Production is paused if there are any active pauses
-        return len(active_pauses) > 0
+        return True
+
+    async def on_unit_created(self, unit: Unit):
+        """Handles newly created units."""
+        if unit.type_id == UnitTypeId.ZERGLING and self.zergling_rally_point and not self.cleanup.cleanup_mode_active:
+            unit.move(self.zergling_rally_point)
+
+    async def on_unit_destroyed(self, unit_tag: int):
+        """Called when a unit is destroyed."""
+        self.last_thing_killed_at = time.time()
 
     async def on_step(self, iteration: int):
         """
@@ -241,9 +237,9 @@ class CompetitiveBot(BotAI):
         if (not self.structures(UnitTypeId.SPAWNINGPOOL) and 
             not self.already_pending(UnitTypeId.SPAWNINGPOOL) and 
             self.can_afford(UnitTypeId.SPAWNINGPOOL)):
-            # Check building cooldown
+            
             current_time = time.time()
-            if current_time - self.cleanup.last_pool_attempt > self.cleanup.build_cooldown:
+            if current_time - self.cleanup.last_pool_attempt > self.cleanup.build_cooldowns[UnitTypeId.SPAWNINGPOOL]:
                 # Calculate position near our first hatchery
                 pool_position = self.start_location.towards(self.game_info.map_center, 5)
                 # Try to find a valid placement near our calculated position
@@ -254,23 +250,18 @@ class CompetitiveBot(BotAI):
         if self.supply_left <= 3 and self.supply_used != 200 and self.already_pending(UnitTypeId.OVERLORD) == 0 and self.larva:
             self.train(UnitTypeId.OVERLORD, 1)  # Only make one overlord at a time
 
+        # Calculate zergling rally point if not set
+        if not self.zergling_rally_point and self.townhalls.amount >= 2:
+            natural = min(self.townhalls, key=lambda th: th.distance_to(self.start_location) if th.position != self.start_location else float('inf'))
+            if natural and natural.position != self.start_location:
+                self.zergling_rally_point = natural.position.towards(self.enemy_start_locations[0], 5)
+        
         # Build zerglings if not paused
         if (self.structures(UnitTypeId.SPAWNINGPOOL).ready and self.larva and 
             not self.is_production_paused(UnitTypeId.ZERGLING)):
             if self.supply_left <= 2 and self.already_pending(UnitTypeId.OVERLORD) == 0:
                 return  # Don't make zerglings if supply is low and no overlord is being built
-
-            # Calculate zergling rally point if not set
-            if not self.zergling_rally_point and self.townhalls.amount >= 2:
-                natural = min(self.townhalls, key=lambda th: th.distance_to(self.start_location) if th.position != self.start_location else float('inf'))
-                if natural and natural.position != self.start_location:
-                    self.zergling_rally_point = natural.position.towards(self.enemy_start_locations[0], 5)
             
-            # Send newly spawned zerglings to rally point
-            if self.zergling_rally_point:
-                for zergling in self.units(UnitTypeId.ZERGLING).idle:
-                    zergling.move(self.zergling_rally_point)
-
             self.train(UnitTypeId.ZERGLING, self.larva.amount)
 
         # Build mutalisks when spire is ready
@@ -293,7 +284,7 @@ class CompetitiveBot(BotAI):
                     queen(AbilityId.EFFECT_INJECTLARVA, self.townhalls.first)
 
         # Build hatchery when minerals are available and drones are present
-        if self.minerals >= 400 and self.units(UnitTypeId.DRONE).amount > 1:
+        if self.minerals >= 350 and self.units(UnitTypeId.DRONE).amount > 1:
             # Check building cooldown
             current_time = time.time()
             if current_time - self.expansion_cooldown > 60:  # 1 minute cooldown
