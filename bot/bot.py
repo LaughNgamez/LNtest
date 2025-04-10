@@ -93,7 +93,7 @@ class CompetitiveBot(BotAI):
         self.opponent_name = self.opponent_id if not self.opponent_id.startswith("Computer") else "Computer"
         
         # Get opponent stats
-        stats = self.opponent_stats.get(self.opponent_id, {"name": self.opponent_name, "wins": 0, "losses": 0})
+        stats = self.opponent_stats.get(self.opponent_id, {"wins": 0, "losses": 0})
         total_games = stats["wins"] + stats["losses"]
         winrate = (stats["wins"] / total_games * 100) if total_games > 0 else 0
         
@@ -178,8 +178,9 @@ class CompetitiveBot(BotAI):
         """
         # Update speed mining
         self.speed_mining.on_step()
-        # Update cleanup
-        await self.cleanup.update()
+        
+        # Update cleanup and handle drone production
+        await self.cleanup.continue_building_drones()  # Call drone production independently
         
         # Calculate zergling rally point if not set
         if not self.zergling_rally_point and self.townhalls.amount >= 2:
@@ -191,7 +192,10 @@ class CompetitiveBot(BotAI):
         if self.zergling_rally_point:
             for zergling in self.units(UnitTypeId.ZERGLING).idle:
                 zergling.move(self.zergling_rally_point)
-
+        
+        # Update cleanup last (may override attack commands)
+        await self.cleanup.update()
+        
         # Assign workers to gas
         for assimilator in self.gas_buildings.ready:
             if assimilator.assigned_harvesters < assimilator.ideal_harvesters:

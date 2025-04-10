@@ -1,10 +1,19 @@
 {
   "Terran_VeryHard": {
-    "wins": 4,
-    "losses": 12,
-    "name": "Terran_VeryHard"
+    "wins": 2,
+    "losses": 12
   },
   "0f184729-b618-47b7-976b-964da08f53ed": {
+    "wins": 1,
+    "losses": 0
+  },
+  "0d0d9c44-2520-457d-84ba-7f6ffe167a3e": {
+    "name": "0d0d9c44-2520-457d-84ba-7f6ffe167a3e",
+    "wins": 0,
+    "losses": 0
+  },
+  "69c0bb31-2c9b-4f39-aebd-914a7da1511d": {
+    "name": "69c0bb31-2c9b-4f39-aebd-914a7da1511d",
     "wins": 1,
     "losses": 0
   }

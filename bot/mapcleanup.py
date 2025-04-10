@@ -17,6 +17,16 @@ class Cleanup:
         self.last_corner_time = 0
         self.current_corner = 0
     
+    async def continue_building_drones(self):
+        """Keep building drones during cleanup phase."""
+        current_time = time.time()
+        if (self.ai.supply_workers < 12 and 
+            self.ai.can_afford(UnitTypeId.DRONE) and 
+            self.ai.larva and 
+            current_time - self.last_drone_time > 30):  # Only build a drone every 30 seconds
+            self.ai.train(UnitTypeId.DRONE)
+            self.last_drone_time = current_time
+    
     async def setup_gas(self):
         """Build extractor and assign workers to it."""
         if not self.gas_setup_complete:
@@ -151,8 +161,4 @@ class Cleanup:
                     print("Completed full base sweep - Starting over from enemy main")
                 self.last_attack_time = current_time
 
-            # Continue building drones if needed
-            if self.ai.units(UnitTypeId.DRONE).amount < 12 and self.ai.larva and self.ai.can_afford(UnitTypeId.DRONE):
-                if self.ai.larva.exists:
-                    self.ai.larva.first.train(UnitTypeId.DRONE)
-                    self.last_drone_time = current_time
+            await self.continue_building_drones()
