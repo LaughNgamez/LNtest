@@ -1,6 +1,8 @@
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.ids.ability_id import AbilityId
+from sc2.position import Point2
 import time
+import math
 
 class Cleanup:
     def __init__(self, bot_ai):
@@ -16,16 +18,57 @@ class Cleanup:
         self.corner_attack_started = False
         self.last_corner_time = 0
         self.current_corner = 0
-    
+        # Grid search variables
+        self.grid_positions = []
+        self.current_muta_target = 0
+        self.current_ling_target = 0
+        self.grid_spacing = 8  # Size of each grid square to search
+        # Building cooldown
+        self.last_build_attempt = 0
+        self.build_cooldown = 30  # 30 seconds cooldown
+        # Attack tracking
+        self.last_cleanup_check = 0
+        self.cleanup_check_interval = 5  # Check every 5 seconds
+        
     async def continue_building_drones(self):
         """Keep building drones during cleanup phase."""
         current_time = time.time()
         if (self.ai.supply_workers < 12 and 
             self.ai.can_afford(UnitTypeId.DRONE) and 
             self.ai.larva and 
-            current_time - self.last_drone_time > 30):  # Only build a drone every 30 seconds
+            current_time - self.last_drone_time > 15):  # Only build a drone every 15 seconds
             self.ai.train(UnitTypeId.DRONE)
             self.last_drone_time = current_time
+    
+    def initialize_grid(self):
+        """Create a grid of positions for units to systematically search."""
+        if not self.grid_positions:
+            # Get playable area bounds
+            p_area = self.ai.game_info.playable_area
+            # Create grid of points
+            for x in range(p_area.x, p_area.x + p_area.width, self.grid_spacing):
+                for y in range(p_area.y, p_area.y + p_area.height, self.grid_spacing):
+                    pos = Point2((x, y))
+                    # Only add if position is pathable
+                    if self.ai.in_pathing_grid(pos):
+                        self.grid_positions.append(pos)
+            print(f"Initialized search grid with {len(self.grid_positions)} positions")
+    
+    def get_next_target(self, unit_type: str) -> Point2:
+        """Get the next position for units to search."""
+        if not self.grid_positions:
+            self.initialize_grid()
+            
+        if self.grid_positions:
+            if unit_type == "mutalisk":
+                target = self.grid_positions[self.current_muta_target]
+                self.current_muta_target = (self.current_muta_target + 1) % len(self.grid_positions)
+                return target
+            else:  # zergling
+                target = self.grid_positions[self.current_ling_target]
+                self.current_ling_target = (self.current_ling_target + 1) % len(self.grid_positions)
+                return target
+        return self.ai.game_info.map_center
     
     async def setup_gas(self):
         """Build extractor and assign workers to it."""
@@ -33,11 +76,15 @@ class Cleanup:
             # Find a geyser near our main base
             geysers = self.ai.vespene_geyser.closer_than(10, self.ai.townhalls.first)
             if geysers and self.ai.can_afford(UnitTypeId.EXTRACTOR):
-                # Build extractor
-                await self.ai.build(UnitTypeId.EXTRACTOR, geysers.first)
-                self.gas_setup_complete = True
-                print("Building extractor for tech progression")
-                
+                # Check building cooldown
+                current_time = time.time()
+                if current_time - self.last_build_attempt > self.build_cooldown:
+                    # Build extractor
+                    await self.ai.build(UnitTypeId.EXTRACTOR, geysers.first)
+                    self.gas_setup_complete = True
+                    print("Building extractor for tech progression")
+                    self.last_build_attempt = current_time
+                    
                 # Assign 3 workers once extractor is built
                 if self.ai.structures(UnitTypeId.EXTRACTOR).ready:
                     extractor = self.ai.structures(UnitTypeId.EXTRACTOR).first
@@ -49,116 +96,133 @@ class Cleanup:
     def start_tech_progression(self):
         """Start the tech progression to lair and spire."""
         if not self.tech_progression_started:
-            # Pause zergling production for 120 seconds OR until lair is built
-            if self.ai.structures(UnitTypeId.LAIR).ready:
-                # If we already have a lair, just do the 30 second pause
-                self.ai.add_production_pause(UnitTypeId.ZERGLING, 30)
-                print("Lair already exists - Adding 30 second pause")
-            else:
-                # Add two separate pauses - whichever finishes first will unpause production
-                self.ai.add_production_pause(UnitTypeId.ZERGLING, 120)  # 120 second pause
-                self.ai.add_production_pause(UnitTypeId.ZERGLING, until_structure=UnitTypeId.LAIR)  # Until lair is built
-                print("Starting tech progression - Pausing zergling production for 120s or until Lair")
+            current_time = time.time()
             
-            self.tech_progression_started = True
+            # Try to build lair if we have spawning pool and resources
+            if (self.ai.structures(UnitTypeId.SPAWNINGPOOL).ready and 
+                self.ai.can_afford(UnitTypeId.LAIR) and 
+                not self.ai.structures(UnitTypeId.LAIR).amount and 
+                not self.ai.already_pending(UnitTypeId.LAIR)):
+                
+                # Only attempt if enough time has passed since last attempt
+                if current_time - self.last_build_attempt > self.build_cooldown:
+                    hq = self.ai.townhalls.first
+                    if hq:
+                        hq.build(UnitTypeId.LAIR)
+                        print("Starting Lair construction")
+                        self.last_build_attempt = current_time
+                        self.tech_progression_started = True
+            
+            # If lair is already started or complete, mark tech progression as started
+            if self.ai.structures(UnitTypeId.LAIR).amount > 0 or self.ai.already_pending(UnitTypeId.LAIR):
+                self.tech_progression_started = True
 
     def start_mutalisk_phase(self):
         """Start mutalisk production and map corner attacks."""
         if not self.mutalisk_phase_started and self.ai.structures(UnitTypeId.SPIRE).ready:
-            # Pause zergling production for 120 seconds OR until we have 5 mutalisks
-            self.ai.add_production_pause(UnitTypeId.ZERGLING, 120)
-            print("Spire complete - Starting mutalisk phase")
-            self.mutalisk_phase_started = True
-
-            # Train mutalisks if we can afford them
+            # Start producing mutalisks
             if self.ai.can_afford(UnitTypeId.MUTALISK) and self.ai.larva:
                 self.ai.train(UnitTypeId.MUTALISK)
+                self.mutalisk_phase_started = True
+                print("Starting Mutalisk production")
 
     def update_mutalisk_attacks(self):
-        """Send mutalisks to attack map corners."""
+        """Update mutalisk attack behavior."""
         if self.mutalisk_phase_started:
-            mutalisks = self.ai.units(UnitTypeId.MUTALISK)
+            current_time = time.time()
             
-            # If we have 5 or more mutalisks, start corner attacks
-            if len(mutalisks) >= 5 and not self.corner_attack_started:
+            # Check if we should attack corners
+            if not self.corner_attack_started and self.ai.units(UnitTypeId.MUTALISK).amount >= 3:
                 self.corner_attack_started = True
-                print("Starting map corner attacks with mutalisks")
-
-            if self.corner_attack_started:
-                current_time = time.time()
-                
-                # Attack a new corner every 30 seconds
-                if current_time - self.last_corner_time >= 30:
-                    # Get map corners (in clockwise order from top-left)
+                print("Starting corner attacks with Mutalisks")
+            
+            # Update corner attacks
+            if self.corner_attack_started and current_time - self.last_corner_time > 30:
+                mutas = self.ai.units(UnitTypeId.MUTALISK)
+                if mutas:
+                    # Get next corner to attack
                     corners = [
-                        (0, self.ai.game_info.map_size[1]),  # Top-left
-                        (self.ai.game_info.map_size[0], self.ai.game_info.map_size[1]),  # Top-right
-                        (self.ai.game_info.map_size[0], 0),  # Bottom-right
-                        (0, 0)  # Bottom-left
+                        Point2((0, 0)),
+                        Point2((self.ai.game_info.map_size[0], 0)),
+                        Point2((0, self.ai.game_info.map_size[1])),
+                        Point2((self.ai.game_info.map_size[0], self.ai.game_info.map_size[1]))
                     ]
-                    
                     target = corners[self.current_corner]
-                    for mutalisk in mutalisks:
-                        mutalisk.attack(self.ai.game_info.map_center.offset(target))
                     
-                    print(f"Sending mutalisks to corner {self.current_corner + 1}/4")
+                    # Attack with all mutalisks
+                    for muta in mutas:
+                        muta.attack(target)
                     
-                    # Move to next corner
+                    # Update corner index and time
                     self.current_corner = (self.current_corner + 1) % 4
                     self.last_corner_time = current_time
     
+    def get_ordered_base_locations(self):
+        """Get base locations ordered by distance from enemy main."""
+        enemy_main = self.ai.enemy_start_locations[0]
+        our_main = self.ai.start_location
+        
+        # Sort expansions by distance from enemy main to our main
+        return sorted(
+            list(self.ai.expansion_locations.keys()),  # Convert dict keys to list
+            key=lambda p: (
+                # Primary sort by distance from enemy main
+                p.distance_to(enemy_main),
+                # Secondary sort by distance from our main (for equidistant bases)
+                -p.distance_to(our_main)
+            )
+        )
+
     async def update(self):
-        """Check conditions and perform cleanup actions."""
+        """Update the cleanup behavior."""
         current_time = time.time()
 
         # Check if we should activate cleanup mode
-        if not self.cleanup_mode_active and getattr(self.ai, "totalattacks", 0) >= 10:
-            self.cleanup_mode_active = True
-            print("Cleanup mode activated!")
-            
-            # Order bases from enemy main to our main
-            enemy_main = self.ai.enemy_start_locations[0]
-            our_main = self.ai.start_location
-            
-            # Sort expansions by distance from enemy main to our main
-            self.ordered_bases = sorted(
-                self.ai.expansion_locations,
-                key=lambda p: (
-                    # Primary sort by distance from enemy main
-                    p.distance_to(enemy_main),
-                    # Secondary sort by distance from our main (for equidistant bases)
-                    -p.distance_to(our_main)
-                )
-            )
-            self.current_base_index = 0
+        if not self.cleanup_mode_active and current_time - self.last_cleanup_check > self.cleanup_check_interval:
+            if getattr(self.ai, "totalattacks", 0) >= 10:
+                print(f"Activating cleanup mode after {getattr(self.ai, 'totalattacks', 0)} attacks")
+                self.cleanup_mode_active = True
+                self.ordered_bases = self.get_ordered_base_locations()
+                self.current_base_index = 0
+                await self.ai.chat_send("Cleanup mode started")
+            self.last_cleanup_check = current_time
 
-        if not self.cleanup_mode_active or not self.ordered_bases:
-            return
-
-        # Setup gas and tech progression when cleanup mode is active
-        await self.setup_gas()
-        if self.gas_setup_complete:
-            self.start_tech_progression()
-            self.start_mutalisk_phase()
-            self.update_mutalisk_attacks()
-
-        # Only perform actions every 30 seconds
-        if current_time - self.last_attack_time >= 30:
-            if self.current_base_index < len(self.ordered_bases):
-                target = self.ordered_bases[self.current_base_index]
+        if self.cleanup_mode_active:
+            # Handle mutalisk scouting when in cleanup mode
+            mutas = self.ai.units(UnitTypeId.MUTALISK)
+            if mutas:
+                # Initialize grid if needed
+                if not self.grid_positions:
+                    self.initialize_grid()
+                    print("Initialized mutalisk search grid")
                 
-                # Attack with all combat units except mutalisks
-                combat_units = self.ai.units.exclude_type([UnitTypeId.DRONE, UnitTypeId.OVERLORD, UnitTypeId.LARVA, UnitTypeId.MUTALISK])
-                if combat_units:
-                    for unit in combat_units:
-                        unit.attack(target)
-                    print(f"Attacking base {self.current_base_index + 1} of {len(self.ordered_bases)} - Distance from enemy main: {target.distance_to(self.ai.enemy_start_locations[0]):.1f}")
+                # Only get new target if all mutas are idle or not attacking
+                if all(not muta.is_attacking and not muta.is_moving for muta in mutas):
+                    target = self.get_next_target("mutalisk")
+                    print(f"Moving mutalisks to grid position {self.current_muta_target}")
+                    for muta in mutas:
+                        muta.attack(target)
+
+            # Handle zergling scouting when in cleanup mode
+            lings = self.ai.units(UnitTypeId.ZERGLING)
+            if lings:
+                # Initialize grid if needed
+                if not self.grid_positions:
+                    self.initialize_grid()
+                    print("Initialized zergling search grid")
                 
-                # Move to next base
-                self.current_base_index += 1
-                if self.current_base_index >= len(self.ordered_bases):
-                    self.current_base_index = 0  # Reset back to enemy main
-                    print("Completed full base sweep - Starting over from enemy main")
-                self.last_attack_time = current_time
+                # Only get new target if all lings are idle or not attacking
+                if all(not ling.is_attacking and not ling.is_moving for ling in lings):
+                    target = self.get_next_target("zergling")
+                    print(f"Moving zerglings to grid position {self.current_ling_target}")
+                    for ling in lings:
+                        ling.attack(target)
+
+            # Setup gas and tech progression
+            await self.setup_gas()
+            if self.gas_setup_complete:
+                self.start_tech_progression()
+                self.start_mutalisk_phase()
+                self.update_mutalisk_attacks()
 
             await self.continue_building_drones()

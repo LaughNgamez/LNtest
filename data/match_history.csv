@@ -16,3 +16,16 @@ timestamp,opponent_name,opponent_race,map_name,result,game_duration_seconds,tota
 2025-04-10T02:19:53.816078,0f184729-b618-47b7-976b-964da08f53ed,Race.Zerg,Abyssal Reef AIE,Result.Victory,98,5
 2025-04-10T03:32:53.574261,0d0d9c44-2520-457d-84ba-7f6ffe167a3e,0d0d9c44-2520-457d-84ba-7f6ffe167a3e,Race.Protoss,ThunderbirdAIE,Result.Tie,659,107
 2025-04-10T03:53:34.038858,69c0bb31-2c9b-4f39-aebd-914a7da1511d,69c0bb31-2c9b-4f39-aebd-914a7da1511d,Race.Zerg,Abyssal Reef AIE,Result.Victory,68,7
+2025-04-10T04:44:56.999803,10a32e91-43de-4a28-a936-bed65c0afc5f,10a32e91-43de-4a28-a936-bed65c0afc5f,Race.Terran,Automaton AIE,Result.Tie,635,71
+2025-04-09T21:57:48.802159,Terran_VeryHard,Terran_VeryHard,Race.Terran,Ephemeron AIE,Result.Defeat,27,0
+2025-04-09T22:00:03.771298,Terran_VeryHard,Terran_VeryHard,Race.Terran,Ephemeron AIE,Result.Victory,42,4
+2025-04-09T22:27:01.161440,Terran_VeryHard,Terran_VeryHard,Race.Terran,Ephemeron AIE,Result.Defeat,28,2
+2025-04-09T22:29:57.545135,Terran_VeryHard,Terran_VeryHard,Race.Terran,Ephemeron AIE,Result.Defeat,10,0
+2025-04-09T22:31:40.537484,Terran_VeryHard,Terran_VeryHard,Race.Terran,Ephemeron AIE,Result.Defeat,17,0
+2025-04-09T22:34:37.955559,Terran_VeryHard,Terran_VeryHard,Race.Terran,Ephemeron AIE,Result.Defeat,33,3
+2025-04-09T22:55:45.886620,Terran_VeryHard,Terran_VeryHard,Race.Terran,Ephemeron AIE,Result.Defeat,25,11
+2025-04-09T23:03:29.965820,Terran_VeryHard,Terran_VeryHard,Race.Terran,Ephemeron AIE,Result.Defeat,16,10
+2025-04-09T23:05:53.880356,Terran_VeryHard,Terran_VeryHard,Race.Terran,Ephemeron AIE,Result.Defeat,14,10
+2025-04-09T23:10:47.166130,Terran_VeryHard,Terran_VeryHard,Race.Terran,Ephemeron AIE,Result.Defeat,27,1
+2025-04-09T23:13:12.276063,Terran_VeryHard,Terran_VeryHard,Race.Terran,Ephemeron AIE,Result.Defeat,32,3
+2025-04-09T23:24:12.560501,Terran_VeryHard,Terran_VeryHard,Race.Terran,Ephemeron AIE,Result.Defeat,32,3

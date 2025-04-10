@@ -29,6 +29,8 @@ class CompetitiveBot(BotAI):
         self.opponent_stats = self.load_opponent_stats()
         self.zergling_rally_point = None
         self.opponent_name = None
+        self.expansion_cooldown = 0
+        self.totalattacks = 0  # Initialize attack counter
 
     def load_opponent_stats(self) -> dict:
         """Load opponent statistics from JSON file."""
@@ -182,20 +184,29 @@ class CompetitiveBot(BotAI):
         # Update cleanup and handle drone production
         await self.cleanup.continue_building_drones()  # Call drone production independently
         
-        # Calculate zergling rally point if not set
-        if not self.zergling_rally_point and self.townhalls.amount >= 2:
-            natural = min(self.townhalls, key=lambda th: th.distance_to(self.start_location) if th.position != self.start_location else float('inf'))
-            if natural and natural.position != self.start_location:
-                self.zergling_rally_point = natural.position.towards(self.enemy_start_locations[0], 5)
-        
-        # Send newly spawned zerglings to rally point
-        if self.zergling_rally_point:
-            for zergling in self.units(UnitTypeId.ZERGLING).idle:
-                zergling.move(self.zergling_rally_point)
-        
-        # Update cleanup last (may override attack commands)
-        await self.cleanup.update()
-        
+        # Time to attack
+        if not hasattr(self, "attacked"):
+            self.attacked = False
+            self.last_attack_frame = 0
+
+        excluded_types = [UnitTypeId.OVERLORD, UnitTypeId.DRONE, UnitTypeId.QUEEN, UnitTypeId.LARVA, UnitTypeId.OVERSEER, UnitTypeId.MUTALISK]
+        army = self.units.exclude_type(excluded_types)
+
+        # Attack cooldown in game frames (22.4 frames per second)
+        attack_cooldown = 30 * 22.4  # ~30 seconds
+
+        if (
+            army.amount > 30
+            and self.time * 22.4 - self.last_attack_frame > attack_cooldown
+            and not self.cleanup.cleanup_mode_active  # Don't do army attacks in cleanup mode
+        ):
+            for unit in army:
+                unit.attack(self.enemy_start_locations[0])
+            await self.chat_send(f"Attack {self.totalattacks + 1}")  # +1 since we increment after
+            self.totalattacks += 1
+            print(f"Main army attack #{self.totalattacks}")
+            self.last_attack_frame = self.time * 22.4
+
         # Assign workers to gas
         for assimilator in self.gas_buildings.ready:
             if assimilator.assigned_harvesters < assimilator.ideal_harvesters:
@@ -223,28 +234,40 @@ class CompetitiveBot(BotAI):
                         if workers:
                             workers.random.gather(assimilator)
 
-        #builds spawning pool on 12 supply, positioned towards enemy base
-        if self.supply_used >= 12:
-            if self.structures(UnitTypeId.SPAWNINGPOOL).amount + self.already_pending(UnitTypeId.SPAWNINGPOOL) == 0:
-                # Get positions
-                our_base = self.townhalls.first.position
-                enemy_base = self.enemy_start_locations[0]
-                
-                # Calculate position 6 distance away from our base towards enemy base
-                pool_position = our_base.towards(enemy_base, 6)
-                
+        # Build spawning pool
+        if (not self.structures(UnitTypeId.SPAWNINGPOOL) and 
+            not self.already_pending(UnitTypeId.SPAWNINGPOOL) and 
+            self.can_afford(UnitTypeId.SPAWNINGPOOL)):
+            # Check building cooldown
+            current_time = time.time()
+            if current_time - self.cleanup.last_build_attempt > self.cleanup.build_cooldown:
+                # Calculate position near our first hatchery
+                pool_position = self.start_location.towards(self.game_info.map_center, 5)
                 # Try to find a valid placement near our calculated position
                 await self.build(UnitTypeId.SPAWNINGPOOL, near=pool_position)
+                self.cleanup.last_build_attempt = current_time
 
-        #build overlord
+        # Build overlord
         if self.supply_left <= 3 and self.supply_used != 200 and self.already_pending(UnitTypeId.OVERLORD) == 0 and self.larva:
             self.train(UnitTypeId.OVERLORD, 1)  # Only make one overlord at a time
 
-        #build zerglings if not paused
+        # Build zerglings if not paused
         if (self.structures(UnitTypeId.SPAWNINGPOOL).ready and self.larva and 
             not self.is_production_paused(UnitTypeId.ZERGLING)):
             if self.supply_left <= 2 and self.already_pending(UnitTypeId.OVERLORD) == 0:
                 return  # Don't make zerglings if supply is low and no overlord is being built
+
+            # Calculate zergling rally point if not set
+            if not self.zergling_rally_point and self.townhalls.amount >= 2:
+                natural = min(self.townhalls, key=lambda th: th.distance_to(self.start_location) if th.position != self.start_location else float('inf'))
+                if natural and natural.position != self.start_location:
+                    self.zergling_rally_point = natural.position.towards(self.enemy_start_locations[0], 5)
+            
+            # Send newly spawned zerglings to rally point
+            if self.zergling_rally_point:
+                for zergling in self.units(UnitTypeId.ZERGLING).idle:
+                    zergling.move(self.zergling_rally_point)
+
             self.train(UnitTypeId.ZERGLING, self.larva.amount)
 
         # Build mutalisks when spire is ready
@@ -253,59 +276,47 @@ class CompetitiveBot(BotAI):
             self.units(UnitTypeId.MUTALISK).amount < 5):
             self.train(UnitTypeId.MUTALISK)
 
-        # time to attack
-        if not hasattr(self, "totalattacks"):
-            self.totalattacks = 0
-            self.attacked = False
-            self.last_attack_frame = 0
-
-        excluded_types = [UnitTypeId.OVERLORD, UnitTypeId.DRONE, UnitTypeId.QUEEN, UnitTypeId.LARVA, UnitTypeId.OVERSEER, UnitTypeId.MUTALISK]
-        army = self.units.exclude_type(excluded_types)
-
-        # attack cooldown in game frames (22.4 frames per second)
-        attack_cooldown = 30 * 22.4  # ~30 seconds
-
-        if (
-            army.amount > 30
-            and self.time * 22.4 - self.last_attack_frame > attack_cooldown
-        ):
-            for unit in army:
-                unit.attack(self.enemy_start_locations[0])
-            await self.chat_send(f"Attack {self.totalattacks}")
-            self.totalattacks += 1
-            self.last_attack_frame = self.time * 22.4
-
-        #train queen
+        # Update cleanup last (may override attack commands)
+        await self.cleanup.update()
+        
+        # Train queen
         if self.structures(UnitTypeId.SPAWNINGPOOL).ready and self.units(UnitTypeId.QUEEN).amount == 0 and self.already_pending(UnitTypeId.QUEEN) == 0:
             self.train(UnitTypeId.QUEEN, 1)
 
-        #inject larva with queens
+        # Inject larva with queens
         if self.units(UnitTypeId.QUEEN).ready:
             for queen in self.units(UnitTypeId.QUEEN).idle:
                 if queen.energy >= 25 and not self.townhalls.first.has_buff(BuffId.QUEENSPAWNLARVATIMER):
                     queen(AbilityId.EFFECT_INJECTLARVA, self.townhalls.first)
 
-        #build hatchery when minerals are available and drones are present
+        # Build hatchery when minerals are available and drones are present
         if self.minerals >= 400 and self.units(UnitTypeId.DRONE).amount > 1:
-            natural = await self.get_next_expansion()
-            if natural:
-                await self.build(UnitTypeId.HATCHERY, near=natural)
+            # Check building cooldown
+            current_time = time.time()
+            if current_time - self.expansion_cooldown > 60:  # 1 minute cooldown
+                natural = await self.get_next_expansion()
+                if natural:
+                    await self.build(UnitTypeId.HATCHERY, near=natural)
+                    self.expansion_cooldown = current_time
 
-        # Build lair if we have enough resources and cleanup mode is active
-        if (self.cleanup.cleanup_mode_active and self.can_afford(UnitTypeId.LAIR) and 
-            self.structures(UnitTypeId.SPAWNINGPOOL).ready):
-            hq = self.townhalls.first
-            if not self.structures(UnitTypeId.LAIR).amount and not self.already_pending(UnitTypeId.LAIR):
-                hq.build(UnitTypeId.LAIR)
-
-        # Build spire when lair is ready
-        if self.structures(UnitTypeId.LAIR).ready:
-            if not self.structures(UnitTypeId.SPIRE).amount and not self.already_pending(UnitTypeId.SPIRE):
-                # Calculate position 4 distance away from our base
-                our_base = self.townhalls.first.position
-                enemy_base = self.enemy_start_locations[0]
-                spire_position = our_base.towards(enemy_base, 4)
-                await self.build(UnitTypeId.SPIRE, near=spire_position)
+    async def get_next_expansion(self):
+        """Get the next expansion location."""
+        # Get all possible expansion locations
+        expansion_locations = self.expansion_locations
+        
+        # Filter out locations that already have a hatchery or are being built on
+        taken_locations = {hatch.position for hatch in self.townhalls}
+        taken_locations.update(building.position for building in self.structures(UnitTypeId.HATCHERY))
+        
+        # Start with locations closest to our start
+        by_distance = sorted(expansion_locations.keys(), 
+                           key=lambda p: p.distance_to(self.start_location))
+        
+        # Return first untaken location
+        for pos in by_distance:
+            if pos not in taken_locations:
+                return pos
+        return None
 
     async def on_end(self, result: Result):
         """
