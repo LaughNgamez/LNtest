@@ -164,7 +164,7 @@ class CompetitiveBot(BotAI):
         Do things here during the game.
         """
         # Update speed mining
-        self.speed_mining.update()
+        self.speed_mining.on_step()
         # Update cleanup
         await self.cleanup.update()
 
