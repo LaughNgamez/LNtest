@@ -22,9 +22,11 @@ class Cleanup:
         self.grid_positions = []
         self.current_muta_target = 0
         self.current_ling_target = 0
-        self.grid_spacing = 8  # Size of each grid square to search
-        # Building cooldown
-        self.last_build_attempt = 0
+        self.grid_spacing = 16  # Doubled from 8 to 16
+        # Building cooldowns - separate for each type
+        self.last_pool_attempt = 0
+        self.last_extractor_attempt = 0
+        self.last_lair_attempt = 0
         self.build_cooldown = 30  # 30 seconds cooldown
         # Attack tracking
         self.last_cleanup_check = 0
@@ -78,12 +80,12 @@ class Cleanup:
             if geysers and self.ai.can_afford(UnitTypeId.EXTRACTOR):
                 # Check building cooldown
                 current_time = time.time()
-                if current_time - self.last_build_attempt > self.build_cooldown:
+                if current_time - self.last_extractor_attempt > self.build_cooldown:
                     # Build extractor
                     await self.ai.build(UnitTypeId.EXTRACTOR, geysers.first)
                     self.gas_setup_complete = True
                     print("Building extractor for tech progression")
-                    self.last_build_attempt = current_time
+                    self.last_extractor_attempt = current_time
                     
                 # Assign 3 workers once extractor is built
                 if self.ai.structures(UnitTypeId.EXTRACTOR).ready:
@@ -105,12 +107,12 @@ class Cleanup:
                 not self.ai.already_pending(UnitTypeId.LAIR)):
                 
                 # Only attempt if enough time has passed since last attempt
-                if current_time - self.last_build_attempt > self.build_cooldown:
+                if current_time - self.last_lair_attempt > self.build_cooldown:
                     hq = self.ai.townhalls.first
                     if hq:
                         hq.build(UnitTypeId.LAIR)
                         print("Starting Lair construction")
-                        self.last_build_attempt = current_time
+                        self.last_lair_attempt = current_time
                         self.tech_progression_started = True
             
             # If lair is already started or complete, mark tech progression as started

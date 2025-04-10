@@ -58,11 +58,11 @@ class CompetitiveBot(BotAI):
                 datetime.now().isoformat(),
                 self.opponent_id,
                 self.opponent_name or "Unknown",
-                str(self.enemy_race),
+                self.enemy_race,
                 self.game_info.map_name,
-                str(result),
-                int(time.time() - self.start_time) if self.start_time else 0,
-                getattr(self, "totalattacks", 0)
+                result.name,  # Victory, Defeat, or Tie
+                int(time.time() - self.start_time),
+                self.totalattacks
             ])
 
     def update_opponent_stats(self, result: Result):
@@ -71,13 +71,16 @@ class CompetitiveBot(BotAI):
             self.opponent_stats[self.opponent_id] = {
                 "name": self.opponent_name or "Unknown",
                 "wins": 0, 
-                "losses": 0
+                "losses": 0,
+                "ties": 0
             }
         
         if result == Result.Victory:
             self.opponent_stats[self.opponent_id]["wins"] += 1
         elif result == Result.Defeat:
             self.opponent_stats[self.opponent_id]["losses"] += 1
+        elif result == Result.Tie:
+            self.opponent_stats[self.opponent_id]["ties"] += 1
         
         # Always update name in case it changed
         self.opponent_stats[self.opponent_id]["name"] = self.opponent_name or "Unknown"
@@ -95,12 +98,12 @@ class CompetitiveBot(BotAI):
         self.opponent_name = self.opponent_id if not self.opponent_id.startswith("Computer") else "Computer"
         
         # Get opponent stats
-        stats = self.opponent_stats.get(self.opponent_id, {"wins": 0, "losses": 0})
-        total_games = stats["wins"] + stats["losses"]
+        stats = self.opponent_stats.get(self.opponent_id, {"wins": 0, "losses": 0, "ties": 0})
+        total_games = stats["wins"] + stats["losses"] + stats["ties"]
         winrate = (stats["wins"] / total_games * 100) if total_games > 0 else 0
         
-        # Send winrate message
-        await self.chat_send(f"GL HF! Winrate {winrate:.1f}% ({stats['wins']}-{stats['losses']})")
+        # Send winrate message with ties
+        await self.chat_send(f"GL HF! Winrate {winrate:.1f}% ({stats['wins']}-{stats['losses']}-{stats['ties']})")
         
         # Initialize components
         self.speed_mining = SpeedMining(self)
@@ -240,12 +243,12 @@ class CompetitiveBot(BotAI):
             self.can_afford(UnitTypeId.SPAWNINGPOOL)):
             # Check building cooldown
             current_time = time.time()
-            if current_time - self.cleanup.last_build_attempt > self.cleanup.build_cooldown:
+            if current_time - self.cleanup.last_pool_attempt > self.cleanup.build_cooldown:
                 # Calculate position near our first hatchery
                 pool_position = self.start_location.towards(self.game_info.map_center, 5)
                 # Try to find a valid placement near our calculated position
                 await self.build(UnitTypeId.SPAWNINGPOOL, near=pool_position)
-                self.cleanup.last_build_attempt = current_time
+                self.cleanup.last_pool_attempt = current_time
 
         # Build overlord
         if self.supply_left <= 3 and self.supply_used != 200 and self.already_pending(UnitTypeId.OVERLORD) == 0 and self.larva:
