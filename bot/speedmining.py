@@ -4,6 +4,7 @@ from sc2.ids.ability_id import AbilityId
 from sc2.unit import Unit
 from sc2.units import Units
 import math
+import time
 
 MINING_RADIUS = 1.325
 
@@ -14,6 +15,8 @@ class SpeedMining:
         self.enable_on_mine = enable_on_mine
         self.mineral_target_dict: Dict[Point2, Point2] = {}
         self.calculate_targets()
+        self.last_worker_check = 0
+        self.worker_check_interval = 30  # Check every 30 seconds
 
     def get_mineral_workers(self) -> Units:
         """Get all workers that are mining minerals (not gas)."""
@@ -85,6 +88,43 @@ class SpeedMining:
             
             self.mineral_target_dict[mf.position] = target
 
+    def calculate_optimal_worker_count(self) -> int:
+        """Calculate optimal number of workers based on mineral patches near bases."""
+        total_patches = 0
+        for base in self.ai.townhalls:
+            nearby_minerals = self.ai.mineral_field.closer_than(8, base)
+            total_patches += len(nearby_minerals)
+        return total_patches * 2  # 2 workers per patch is optimal
+
+    def redistribute_workers(self):
+        """Check worker count and redistribute if necessary."""
+        current_time = time.time()
+        if current_time - self.last_worker_check < self.worker_check_interval:
+            return
+
+        self.last_worker_check = current_time
+        optimal_workers = self.calculate_optimal_worker_count()
+        current_miners = len([w for w in self.ai.workers if w.is_gathering])
+
+        if current_miners > optimal_workers:
+            # Find a worker to move to another base
+            for worker in self.ai.workers:
+                if worker.is_gathering:
+                    # Find another base that isn't the closest one
+                    current_base = self.ai.townhalls.closest_to(worker)
+                    other_bases = self.ai.townhalls.filter(lambda b: b.tag != current_base.tag)
+                    
+                    if other_bases:
+                        target_base = other_bases.closest_to(worker)
+                        # Find least saturated mineral patch at new base
+                        nearby_minerals = self.ai.mineral_field.closer_than(8, target_base)
+                        if nearby_minerals:
+                            best_mineral = min(nearby_minerals, 
+                                            key=lambda m: len([w for w in self.ai.workers if w.order_target == m.tag]))
+                            worker.gather(best_mineral)
+                            print(f"Moving excess worker to new base - Current miners: {current_miners}, Optimal: {optimal_workers}")
+                            break
+
     def speedmine_single(self, worker: Unit):
         """Optimize mining for a single worker."""
         if not worker.orders or len(worker.orders) != 1:
@@ -117,14 +157,10 @@ class SpeedMining:
 
     def on_step(self):
         """Update speed mining for all workers."""
-        # Skip if no townhalls
-        if not self.ai.townhalls.exists:
-            return
-            
-        # Recalculate if bases or mineral fields changed
+        # Recalculate targets if needed
         if len(self.mineral_target_dict) != len(self.ai.mineral_field):
             self.calculate_targets()
 
-        # Update each mineral worker
+        self.redistribute_workers()  # Check and redistribute workers if needed
         for worker in self.get_mineral_workers():
             self.speedmine_single(worker)

@@ -129,11 +129,16 @@ class Cleanup:
                 not self.ai.structures(UnitTypeId.SPIRE).amount and 
                 not self.ai.already_pending(UnitTypeId.SPIRE)):
 
+                print(f"Attempting to build Spire - Lair ready: {self.ai.structures(UnitTypeId.LAIR).ready}, Can afford: {self.ai.can_afford(UnitTypeId.SPIRE)}")
                 # Calculate position near our lair
                 spire_position = self.ai.structures(UnitTypeId.LAIR).first.position.towards(self.ai.game_info.map_center, 6)
-                await self.ai.build(UnitTypeId.SPIRE, near=spire_position)
-                print("Starting Spire construction")
-                self.last_spire_attempt = time.time()
+                placement_success = await self.ai.build(UnitTypeId.SPIRE, near=spire_position)
+                print(f"Spire placement success: {placement_success}")
+                if placement_success:
+                    print("Starting Spire construction")
+                    self.last_spire_attempt = time.time()
+                else:
+                    print("Failed to place Spire - might be a placement issue")
     
     def start_mutalisk_phase(self):
         """Start mutalisk production and map corner attacks."""
@@ -198,7 +203,9 @@ class Cleanup:
         # Check if we should enter cleanup mode
         if not self.cleanup_mode_active:
             # Enter cleanup mode if nothing has been killed in the last 3 minutes
-            if current_time - self.ai.last_thing_killed_at > 180:  # 180 seconds = 3 minutes
+            time_since_last_kill = current_time - self.ai.last_thing_killed_at
+            print(f"Time since last kill: {time_since_last_kill:.1f} seconds")
+            if time_since_last_kill > 180:  # 180 seconds = 3 minutes
                 self.cleanup_mode_active = True
                 self.initialize_grid()
                 print("Activating cleanup mode after 3 minutes of no kills")
@@ -240,6 +247,7 @@ class Cleanup:
             await self.setup_gas()
             if self.gas_setup_complete:
                 await self.start_tech_progression()
+                print(f"Tech status - Lair: {self.ai.structures(UnitTypeId.LAIR).amount}, Spire: {self.ai.structures(UnitTypeId.SPIRE).amount}")
                 self.start_mutalisk_phase()
                 self.update_mutalisk_attacks()
 

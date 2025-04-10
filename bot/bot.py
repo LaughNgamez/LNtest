@@ -32,7 +32,7 @@ class CompetitiveBot(BotAI):
         self.opponent_name = None
         self.expansion_cooldown = 0
         self.totalattacks = 0  # Initialize attack counter
-        self.last_thing_killed_at = time.time()  # Track when the last unit/building was destroyed
+        self.last_thing_killed_at = time.time()  # Initialize the timestamp
 
     def load_opponent_stats(self) -> dict:
         """Load opponent statistics from JSON file."""
@@ -166,7 +166,10 @@ class CompetitiveBot(BotAI):
     async def on_unit_created(self, unit: Unit):
         """Handles newly created units."""
         if unit.type_id == UnitTypeId.ZERGLING and self.zergling_rally_point and not self.cleanup.cleanup_mode_active:
+            # First move to rally point
             unit.move(self.zergling_rally_point)
+            # Then patrol between rally point and main base
+            unit.patrol(self.start_location, queue=True)
 
     async def on_unit_destroyed(self, unit_tag: int):
         """Called when a unit is destroyed."""
@@ -181,7 +184,8 @@ class CompetitiveBot(BotAI):
         self.speed_mining.on_step()
         
         # Update cleanup and handle drone production
-        await self.cleanup.continue_building_drones()  # Call drone production independently
+        await self.cleanup.update()  # Update cleanup mode first
+        await self.cleanup.continue_building_drones()  # Then handle drone production
         
         # Time to attack
         if not hasattr(self, "attacked"):
@@ -271,7 +275,7 @@ class CompetitiveBot(BotAI):
             self.train(UnitTypeId.MUTALISK)
 
         # Update cleanup last (may override attack commands)
-        await self.cleanup.update()
+        # await self.cleanup.update()
         
         # Train queen
         if self.structures(UnitTypeId.SPAWNINGPOOL).ready and self.units(UnitTypeId.QUEEN).amount == 0 and self.already_pending(UnitTypeId.QUEEN) == 0:
