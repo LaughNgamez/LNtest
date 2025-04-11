@@ -32,7 +32,8 @@ class CompetitiveBot(BotAI):
         self.opponent_name = None
         self.expansion_cooldown = 0
         self.totalattacks = 0  # Initialize attack counter
-        self.last_thing_killed_at = time.time()  # Initialize the timestamp
+        self.last_kill_gameloop = 0  # Game time of last unit killed
+        self.ignored_types = {UnitTypeId.MULE, UnitTypeId.LARVA, UnitTypeId.EGG, UnitTypeId.DRONE}
 
     def load_opponent_stats(self) -> dict:
         """Load opponent statistics from JSON file."""
@@ -95,6 +96,8 @@ class CompetitiveBot(BotAI):
         """
         print("Game started")
         self.start_time = time.time()
+        self.last_kill_gameloop = 0  # Start at 0 game seconds
+        await self.chat_send("[DEBUG] Combat timer starting at 0")
         
         # Get opponent name from opponent_id or use "Computer" for AI
         self.opponent_name = self.opponent_id if not self.opponent_id.startswith("Computer") else "Computer"
@@ -154,13 +157,21 @@ class CompetitiveBot(BotAI):
             return False
         
         current_time = time.time()
-        pause_end_time = self.production_pauses[unit_type]
+        pauses = self.production_pauses[unit_type]
         
-        if current_time >= pause_end_time:
-            # Remove expired pause
+        # Remove any expired pauses and check if any are still active
+        active_pauses = []
+        for pause in pauses:
+            if current_time < pause['end_time']:
+                active_pauses.append(pause)
+                
+        if not active_pauses:
+            # All pauses expired
             del self.production_pauses[unit_type]
             return False
             
+        # Update the list with only active pauses
+        self.production_pauses[unit_type] = active_pauses
         return True
 
     async def on_unit_created(self, unit: Unit):
@@ -171,34 +182,42 @@ class CompetitiveBot(BotAI):
             # Then patrol between rally point and main base
             unit.patrol(self.start_location, queue=True)
 
-    async def on_unit_took_damage(self, unit: Unit, amount_damage: float):
-        """Called when a unit takes damage."""
-        # Only track enemy units dying from damage
-        if unit.health <= 0 and unit.tag in self.enemy_units.tags:
-            old_time = self.last_thing_killed_at
-            self.last_thing_killed_at = time.time()
-            await self.chat_send(f"[DEBUG] Enemy {unit.type_id} killed at {self.last_thing_killed_at:.1f}")
-
     async def on_unit_destroyed(self, unit_tag: int):
         """Called when a unit is destroyed."""
-        # We're using on_unit_took_damage instead to track actual combat kills
-        pass
+        # First check our own units for drone morphing
+        if unit_tag in self.units.tags:
+            unit = self.units.find_by_tag(unit_tag)
+            if unit and unit.type_id == UnitTypeId.DRONE:
+                return  # Skip drone morphing
+        
+        # If it was in our enemy_units last frame, it's a valid enemy death
+        if unit_tag in self._enemy_units_previous_map:
+            unit = self._enemy_units_previous_map[unit_tag]
+            if unit.type_id not in self.ignored_types:
+                self.last_kill_gameloop = self.time
 
     async def on_step(self, iteration: int):
         """
         This code runs every step of the game.
         Do things here during the game.
         """
+        # Show debug message every ~30 seconds instead of every 10
+        if iteration % 600 == 0:
+            time_since_kill = self.time - self.last_kill_gameloop
+            if time_since_kill > 30:  # Only show if more than 30 seconds passed
+                await self.chat_send(f"[DEBUG] Time since last kill: {time_since_kill:.1f}s")
+        
         # Update speed mining
         self.speed_mining.on_step()
         
+        # Check for zergling cap before training
+        if len(self.units(UnitTypeId.ZERGLING)) >= self.cleanup.max_zerglings:
+            self.add_production_pause(UnitTypeId.ZERGLING)
+        elif UnitTypeId.ZERGLING in self.production_pauses and not self.cleanup.cleanup_mode_active:
+            # Only unpause if we're under cap and not in cleanup mode
+            del self.production_pauses[UnitTypeId.ZERGLING]
+        
         # Update cleanup and handle drone production
-        if iteration % 200 == 0:  # Print every ~10 seconds (22.4 frames per second)
-            current_time = time.time()
-            time_since_kill = current_time - self.last_thing_killed_at
-            # Only show message if we're getting close to cleanup mode (>2 minutes)
-            if time_since_kill > 120:
-                await self.chat_send(f"[DEBUG] Time since last kill: {time_since_kill:.1f}s")
         await self.cleanup.update()  # Update cleanup mode first
         await self.cleanup.continue_building_drones()  # Then handle drone production
         

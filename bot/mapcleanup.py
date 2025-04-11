@@ -22,7 +22,7 @@ class Cleanup:
         self.grid_positions = []
         self.current_muta_target = 0
         self.current_ling_target = 0
-        self.grid_spacing = 16  # Doubled from 8 to 16
+        self.grid_spacing = 8  # Reduced from 16 to 8 for more thorough search
         # Building cooldowns - separate for each type
         self.last_extractor_attempt = 0
         self.last_pool_attempt = 0
@@ -37,7 +37,10 @@ class Cleanup:
         # Attack tracking
         self.last_cleanup_check = 0
         self.cleanup_check_interval = 5  # Check every 5 seconds
-        
+        # Unit caps and timings
+        self.max_zerglings = 100
+        self.cleanup_production_pause = 120  # 120 second pause when cleanup starts
+
     async def continue_building_drones(self):
         """Keep building drones during cleanup phase."""
         current_time = time.time()
@@ -196,19 +199,29 @@ class Cleanup:
             )
         )
 
+    async def tech_status(self):
+        """Check tech status and print debug info."""
+        # Only print tech status when we're actually trying to build something
+        if self.cleanup_mode_active and self.ai.can_afford(UnitTypeId.LAIR):
+            await self.ai.chat_send(f"Tech status - Lair: {len(self.ai.structures(UnitTypeId.LAIR))}, Spire: {len(self.ai.structures(UnitTypeId.SPIRE))}")
+
     async def update(self):
         """Update the cleanup behavior."""
-        current_time = time.time()
-
         # Check if we should enter cleanup mode
         if not self.cleanup_mode_active:
-            # Enter cleanup mode if nothing has been killed in the last 3 minutes
-            time_since_last_kill = current_time - self.ai.last_thing_killed_at
-            if time_since_last_kill > 180:  # 180 seconds = 3 minutes
+            # Don't allow cleanup mode before 5 minutes into the game
+            if self.ai.time < 300:  # 300 seconds = 5 minutes
+                return
+                
+            # Enter cleanup mode if no kills for 5 minutes of game time
+            time_since_kill = self.ai.time - self.ai.last_kill_gameloop
+            if time_since_kill > 180:  # 180 seconds = 3 minutes
                 self.cleanup_mode_active = True
                 self.initialize_grid()
                 await self.ai.chat_send("[CLEANUP] Activating cleanup mode after 3 minutes of no kills")
                 await self.ai.chat_send("[CLEANUP] Initialized search grid")
+                # Pause zergling production when entering cleanup mode
+                self.ai.add_production_pause(UnitTypeId.ZERGLING, duration_seconds=self.cleanup_production_pause)
 
         if self.cleanup_mode_active:
             # Handle mutalisk scouting when in cleanup mode
@@ -245,7 +258,7 @@ class Cleanup:
             await self.setup_gas()
             if self.gas_setup_complete:
                 await self.start_tech_progression()
-                print(f"Tech status - Lair: {self.ai.structures(UnitTypeId.LAIR).amount}, Spire: {self.ai.structures(UnitTypeId.SPIRE).amount}")
+                await self.tech_status()
                 self.start_mutalisk_phase()
                 self.update_mutalisk_attacks()
 
