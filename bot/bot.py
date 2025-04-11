@@ -171,9 +171,18 @@ class CompetitiveBot(BotAI):
             # Then patrol between rally point and main base
             unit.patrol(self.start_location, queue=True)
 
+    async def on_unit_took_damage(self, unit: Unit, amount_damage: float):
+        """Called when a unit takes damage."""
+        # Only track enemy units dying from damage
+        if unit.health <= 0 and unit.tag in self.enemy_units.tags:
+            old_time = self.last_thing_killed_at
+            self.last_thing_killed_at = time.time()
+            await self.chat_send(f"[DEBUG] Enemy {unit.type_id} killed at {self.last_thing_killed_at:.1f}")
+
     async def on_unit_destroyed(self, unit_tag: int):
         """Called when a unit is destroyed."""
-        self.last_thing_killed_at = time.time()
+        # We're using on_unit_took_damage instead to track actual combat kills
+        pass
 
     async def on_step(self, iteration: int):
         """
@@ -184,6 +193,12 @@ class CompetitiveBot(BotAI):
         self.speed_mining.on_step()
         
         # Update cleanup and handle drone production
+        if iteration % 200 == 0:  # Print every ~10 seconds (22.4 frames per second)
+            current_time = time.time()
+            time_since_kill = current_time - self.last_thing_killed_at
+            # Only show message if we're getting close to cleanup mode (>2 minutes)
+            if time_since_kill > 120:
+                await self.chat_send(f"[DEBUG] Time since last kill: {time_since_kill:.1f}s")
         await self.cleanup.update()  # Update cleanup mode first
         await self.cleanup.continue_building_drones()  # Then handle drone production
         

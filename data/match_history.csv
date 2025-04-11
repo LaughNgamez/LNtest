@@ -1,0 +1,7 @@
+timestamp,opponent_id,opponent_name,opponent_race,map_name,result,game_duration_seconds,total_attacks
+2025-04-10T18:55:04.116167,Terran_VeryHard,Terran_VeryHard,Race.Terran,Interloper AIE,Defeat,13,0
+2025-04-10T18:57:38.918411,Terran_VeryHard,Terran_VeryHard,Race.Terran,Interloper AIE,Defeat,32,3
+2025-04-10T19:02:02.342207,Terran_VeryHard,Terran_VeryHard,Race.Terran,Interloper AIE,Defeat,10,0
+2025-04-10T19:03:53.304027,Terran_VeryHard,Terran_VeryHard,Race.Terran,Interloper AIE,Defeat,15,0
+2025-04-10T19:06:07.126996,Terran_VeryHard,Terran_VeryHard,Race.Terran,Interloper AIE,Defeat,14,0
+2025-04-10T19:08:50.149302,Terran_VeryHard,Terran_VeryHard,Race.Terran,Interloper AIE,Victory,39,5

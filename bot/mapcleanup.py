@@ -204,13 +204,11 @@ class Cleanup:
         if not self.cleanup_mode_active:
             # Enter cleanup mode if nothing has been killed in the last 3 minutes
             time_since_last_kill = current_time - self.ai.last_thing_killed_at
-            print(f"Time since last kill: {time_since_last_kill:.1f} seconds")
             if time_since_last_kill > 180:  # 180 seconds = 3 minutes
                 self.cleanup_mode_active = True
                 self.initialize_grid()
-                print("Activating cleanup mode after 3 minutes of no kills")
-                await self.ai.chat_send("Entering cleanup mode")
-                print("Initialized zergling search grid")
+                await self.ai.chat_send("[CLEANUP] Activating cleanup mode after 3 minutes of no kills")
+                await self.ai.chat_send("[CLEANUP] Initialized search grid")
 
         if self.cleanup_mode_active:
             # Handle mutalisk scouting when in cleanup mode
