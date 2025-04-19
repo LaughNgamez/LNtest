@@ -8,6 +8,7 @@ import time
 class Build:
     """Base class for builds."""
     DEFAULT_ARMY_AMOUNT: int = 10
+    NAME: str = "Base Build"
     
     def __init__(self, name: str):
         self.name = name
@@ -16,20 +17,6 @@ class Build:
             self._stats[self.name] = {
                 "opponent_history": {}  # Track results and army amounts per opponent
             }
-        
-        # Migrate existing records to include supply_history
-        if self.name in self._stats:
-            for opponent_id in self._stats[self.name]["opponent_history"]:
-                opponent_stats = self._stats[self.name]["opponent_history"][opponent_id]
-                if "supply_history" not in opponent_stats:
-                    opponent_stats["supply_history"] = {}
-                    # Initialize with current army amount if it exists
-                    if "army_amount" in opponent_stats:
-                        current_amount = str(opponent_stats["army_amount"])
-                        opponent_stats["supply_history"][current_amount] = {
-                            "wins": opponent_stats.get("wins", 0),
-                            "losses": opponent_stats.get("losses", 0)
-                        }
             self._save_stats()
         
     def _get_stats_file(self) -> Path:
@@ -65,46 +52,30 @@ class Build:
             opponent_id: ID of the opponent
             army_supply: The army supply amount used in this game
         """
-        if self.name not in self._stats:
-            self._stats[self.name] = {
-                "opponent_history": {}
-            }
-            
-        # Initialize opponent history if not exists
+        # Initialize opponent stats if needed
         if opponent_id not in self._stats[self.name]["opponent_history"]:
             self._stats[self.name]["opponent_history"][opponent_id] = {
-                "wins": 0,
-                "losses": 0,
                 "army_amount": self.DEFAULT_ARMY_AMOUNT,
                 "last_result": None,
                 "timestamp": None,
-                "supply_history": {}  # Track results per army supply amount
+                "supply_history": {}
             }
             
         opponent_stats = self._stats[self.name]["opponent_history"][opponent_id]
         
-        # Ensure keys exist for robustness
-        if "wins" not in opponent_stats:
-            opponent_stats["wins"] = 0
-        if "losses" not in opponent_stats:
-            opponent_stats["losses"] = 0
-        if "army_amount" not in opponent_stats:
-            opponent_stats["army_amount"] = self.DEFAULT_ARMY_AMOUNT
-        if "supply_history" not in opponent_stats:
-            opponent_stats["supply_history"] = {}
-            
-        # Initialize or update supply history for this army amount
-        supply_key = str(army_supply)  # Convert to string for JSON compatibility
+        # Initialize supply history for this amount if needed
+        supply_key = str(army_supply)
         if supply_key not in opponent_stats["supply_history"]:
-            opponent_stats["supply_history"][supply_key] = {"wins": 0, "losses": 0}
+            opponent_stats["supply_history"][supply_key] = {
+                "wins": 0,
+                "losses": 0
+            }
             
         # Update supply history
         if won:
             opponent_stats["supply_history"][supply_key]["wins"] += 1
-            opponent_stats["wins"] += 1
         else:
             opponent_stats["supply_history"][supply_key]["losses"] += 1
-            opponent_stats["losses"] += 1
             
         # Update last result and timestamp
         opponent_stats["last_result"] = "won" if won else "lost"
@@ -113,33 +84,6 @@ class Build:
         # Save stats
         self._save_stats()
         
-        # Find next viable army amount
-        current_amount = opponent_stats["army_amount"]
-        next_amount = current_amount
-        
-        while next_amount < 95:
-            next_amount += 5
-            # Check if this amount has 3+ losses
-            str_amount = str(next_amount)
-            if str_amount in opponent_stats["supply_history"]:
-                supply_stats = opponent_stats["supply_history"][str_amount]
-                if supply_stats["losses"] >= 3:
-                    continue  # Skip this amount
-            # Found a viable amount
-            break
-                
-        # If we couldn't find a viable amount or hit 95, check if all amounts have 3+ losses
-        if next_amount >= 95:
-            all_losing = all(
-                stats["losses"] >= 3
-                for amount, stats in opponent_stats["supply_history"].items()
-                if int(amount) >= self.DEFAULT_ARMY_AMOUNT
-            )
-            if all_losing:
-                next_amount = self.DEFAULT_ARMY_AMOUNT
-                
-        opponent_stats["army_amount"] = next_amount
-                
     def get_army_amount(self, opponent_id: str) -> int:
         """Get army amount for a specific opponent.
         
@@ -149,12 +93,85 @@ class Build:
         Returns:
             Current army amount for this opponent
         """
+        # Calculate base army amount from build-specific losses
+        losses = self.get_build_losses(opponent_id)
+        base_amount = self.DEFAULT_ARMY_AMOUNT + (losses * 5)
+        
+        # Initialize opponent stats if needed
+        if opponent_id not in self._stats[self.name]["opponent_history"]:
+            self._stats[self.name]["opponent_history"][opponent_id] = {
+                "army_amount": base_amount,
+                "last_result": None,
+                "timestamp": None,
+                "supply_history": {}
+            }
+            self._save_stats()
+            return base_amount
+            
+        # Check if this amount has 3+ losses for this build
+        opponent_stats = self._stats[self.name]["opponent_history"][opponent_id]
+        current_amount = base_amount
+        while current_amount < 95:
+            str_amount = str(current_amount)
+            if str_amount in opponent_stats["supply_history"]:
+                supply_stats = opponent_stats["supply_history"][str_amount]
+                if supply_stats["losses"] >= 3:
+                    current_amount += 5
+                    continue
+            # Found a viable amount
+            break
+            
+        # If we couldn't find a viable amount or hit 95, check if all amounts have 3+ losses
+        if current_amount >= 95:
+            all_losing = all(
+                stats["losses"] >= 3
+                for amount, stats in opponent_stats["supply_history"].items()
+                if int(amount) >= self.DEFAULT_ARMY_AMOUNT
+            )
+            if all_losing:
+                current_amount = self.DEFAULT_ARMY_AMOUNT
+                
+        return current_amount
+        
+    def get_total_losses(self, opponent_id: str) -> int:
+        """Get total number of losses against an opponent.
+        
+        Args:
+            opponent_id: ID of the opponent
+            
+        Returns:
+            Total number of losses
+        """
         if (
-            self.name in self._stats 
+            self.name in self._stats
             and opponent_id in self._stats[self.name]["opponent_history"]
         ):
-            return self._stats[self.name]["opponent_history"][opponent_id]["army_amount"]
-        return self.DEFAULT_ARMY_AMOUNT
+            return sum(
+                stats["losses"]
+                for stats in self._stats[self.name]["opponent_history"][opponent_id]["supply_history"].values()
+            )
+        return 0
+        
+    def get_build_losses(self, opponent_id: str) -> int:
+        """Get number of losses for this specific build against an opponent.
+        
+        Args:
+            opponent_id: ID of the opponent
+            
+        Returns:
+            Total number of losses for this build
+        """
+        if (
+            self.name in self._stats
+            and opponent_id in self._stats[self.name]["opponent_history"]
+            and "supply_history" in self._stats[self.name]["opponent_history"][opponent_id]
+        ):
+            opponent_stats = self._stats[self.name]["opponent_history"][opponent_id]
+            total_losses = 0
+            for supply_stats in opponent_stats["supply_history"].values():
+                total_losses += supply_stats["losses"]
+            return total_losses
+        return 0
         
     def get_supply_stats(self, opponent_id: str, army_supply: int) -> tuple[int, int, float]:
         """Get win/loss stats for a specific army supply amount.
@@ -205,8 +222,9 @@ class Build:
         total_wins = 0
         total_losses = 0
         for opponent_stats in self._stats[self.name]["opponent_history"].values():
-            total_wins += opponent_stats.get("wins", 0)
-            total_losses += opponent_stats.get("losses", 0)
+            for supply_stats in opponent_stats["supply_history"].values():
+                total_wins += supply_stats["wins"]
+                total_losses += supply_stats["losses"]
             
         return {"wins": total_wins, "losses": total_losses}
         
@@ -225,8 +243,10 @@ class Build:
 
 class DynamicLingBuild(Build):
     """Dynamic ling-focused build that adapts army size based on performance."""
+    NAME = "Dynamic Ling"
+    
     def __init__(self):
-        super().__init__("Dynamic ling build")
+        super().__init__(self.NAME)
         
     async def on_step(self, bot):
         """Execute build logic each step."""
@@ -235,6 +255,8 @@ class DynamicLingBuild(Build):
 
 class StandardBuild(Build):
     """Standard macro-focused build."""
+    NAME = "Standard"
+    
     def __init__(self):
         super().__init__("Standard")
         

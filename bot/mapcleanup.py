@@ -53,10 +53,10 @@ class Cleanup:
     async def continue_building_drones(self):
         """Keep building drones during cleanup phase."""
         current_time = time.time()
-        if (self.ai.supply_workers < 12 and 
+        if (self.ai.supply_workers < 13 and 
             self.ai.can_afford(UnitTypeId.DRONE) and 
             self.ai.larva and 
-            current_time - self.last_drone_time > 10):  # Only build a drone every 10 seconds
+            current_time - self.last_drone_time > 8):  # Only build a drone every 8 seconds
             self.ai.train(UnitTypeId.DRONE)
             self.last_drone_time = current_time
     
@@ -154,6 +154,10 @@ class Cleanup:
     async def setup_gas(self):
         """Build extractor and assign workers to it."""
         if not self.gas_setup_complete:
+            # Check if we have any bases first
+            if not self.ai.townhalls:
+                return
+                
             # Find a geyser near our main base
             geysers = self.ai.vespene_geyser.closer_than(10, self.ai.townhalls.first)
             if geysers and self.ai.can_afford(UnitTypeId.EXTRACTOR):

@@ -33,6 +33,7 @@ class CompetitiveBot(BotAI):
         self.opponent_name = None
         self.totalattacks = 0
         self.last_kill_gameloop = 0
+        self.last_attack_frame = 0  # Initialize last attack frame
         self.ignored_types = {
             UnitTypeId.MULE,
             UnitTypeId.LARVA,
@@ -60,23 +61,40 @@ class CompetitiveBot(BotAI):
     async def on_start(self):
         """Called when the game starts."""
         print("Game started")
+        await super().on_start()
         self.start_time = time.time()
-        self.last_kill_gameloop = 0
+        self.opponent_id = str(self.enemy_race)  # Use enemy_race as opponent_id for now
+        self.opponent_name = str(self.enemy_race)  # Use enemy_race as name too
         
-        # Get opponent name from game data
-        if self._game_info and self._game_info.player_info:
-            opponent_info = self._game_info.player_info[1]  # Index 1 is always opponent in 1v1
-            self.opponent_name = opponent_info.name
-            
-        # Update current army supply based on opponent
+        # Show opponent summary
+        await self.chat_send(self.stats_manager.get_opponent_summary())
+        
+        # Show previous match result if we have one
+        last_result = self.build_strategy.get_last_game_result(self.opponent_id)
+        army_amount = self.build_strategy.get_army_amount(self.opponent_id)
+        wins, losses, winrate = self.build_strategy.get_supply_stats(self.opponent_id, army_amount)
+        
+        if last_result:
+            result_msg = f"{self.NAME} {last_result} the previous match using {self.build_strategy.NAME} build - {winrate:.1f}% WR ({wins}-{losses})"
+            await self.chat_send(result_msg)
+        else:
+            # If no previous game, show initial message with current stats
+            result_msg = f"{self.NAME} starting first match using {self.build_strategy.NAME} build - {winrate:.1f}% WR ({wins}-{losses})"
+            await self.chat_send(result_msg)
+        
+        # Get and announce attack amount for this game
         self.current_army_supply = self.build_strategy.get_army_amount(self.opponent_id)
+        await self.chat_send(f"Crawler will be attacking with army supply amount of {self.current_army_supply}")
+        
+        # Initialize last attack frame
+        self.last_attack_frame = 0
+        self.attack_stage_time = 0.0
         
         # Initialize components
         self.speed_mining = SpeedMining(self)
         self.cleanup = Cleanup(self)
         
         # Initialize attack tracking
-        self.last_attack_frame = 0
         self.previous_result_shown = False
         
         # Announce build and stats
@@ -96,25 +114,6 @@ class CompetitiveBot(BotAI):
             if current_army.amount > self.max_army_supply:
                 self.max_army_supply = current_army.amount
 
-        # Show opponent summary and previous match result at 5 seconds
-        if not self.previous_result_shown and iteration > 112:  # 5 seconds at 22.4 iterations/second
-            # Show opponent summary
-            await self.chat_send(self.stats_manager.get_opponent_summary())
-            
-            # Show previous match result if we have one
-            last_result = self.build_strategy.get_last_game_result(self.opponent_id)
-            if last_result:
-                army_amount = self.build_strategy.get_army_amount(self.opponent_id)
-                wins, losses, winrate = self.build_strategy.get_supply_stats(self.opponent_id, army_amount)
-                result_msg = f"{self.NAME} {last_result} our previous match using army amount {army_amount} - {winrate:.1f}% WR ({wins}-{losses})"
-                await self.chat_send(result_msg)
-            else:
-                # If no previous game, show initial message
-                army_amount = self.build_strategy.get_army_amount(self.opponent_id)
-                result_msg = f"{self.NAME} starting first match using army amount {army_amount} - 0.0% WR (0-0)"
-                await self.chat_send(result_msg)
-            self.previous_result_shown = True
-        
         # Run build-specific logic
         await self.build_strategy.on_step(self)
         
@@ -162,38 +161,53 @@ class CompetitiveBot(BotAI):
 
         excluded_types = [UnitTypeId.OVERLORD, UnitTypeId.DRONE, UnitTypeId.QUEEN, UnitTypeId.LARVA, UnitTypeId.OVERSEER, UnitTypeId.MUTALISK]
         army = self.units.exclude_type(excluded_types)
+        army_supply = self.supply_army  # Use supply instead of unit count
         zerglings = self.units(UnitTypeId.ZERGLING)
         not_attacking_zerglings = [z for z in zerglings if self.zergling_attack_status.get(z.tag, "not attacking") == "not attacking"]
 
         # Attack cooldown in game frames (22.4 frames per second)
         attack_cooldown = 30 * 22.4  # ~30 seconds
 
+        # Only print attack conditions every 30 seconds (about 672 frames)
+        if self.time * 22.4 % 672 < 1:
+            print(f"Army supply: {army_supply}, Target: {self.current_army_supply}")
+            print(f"Time since last attack: {self.time * 22.4 - self.last_attack_frame}, Cooldown: {attack_cooldown}")
+            print(f"Attack conditions: supply={army_supply >= self.current_army_supply}, cooldown={self.time * 22.4 - self.last_attack_frame > attack_cooldown}, not_cleanup={not self.cleanup.cleanup_mode_active}")
+            print(f"Attack stage time: {self.attack_stage_time}, Stage 1 duration: {self.time - self.attack_stage_time if self.attack_stage_time != 0.0 else 0}")
+
         # Two-stage attack logic
         if (
-            army.amount > self.current_army_supply
+            army_supply >= self.current_army_supply
             and self.time * 22.4 - self.last_attack_frame > attack_cooldown
             and not self.cleanup.cleanup_mode_active  # Don't do army attacks in cleanup mode
         ):
-            # Stage 1: Attack to furthest friendly base as staging point (do NOT update status)
-            if not getattr(self, "attack_staged", False):
-                # Find furthest friendly base relative to our start location
-                furthest_base = max(self.townhalls, key=lambda th: th.position.distance_to(self.start_location))
-                for z in not_attacking_zerglings:
-                    z.attack(furthest_base.position)
-                self.attack_staged = True
-                self.attack_stage_time = self.time
+            # Stage 1: Move zerglings to the furthest friendly base
+            if self.attack_stage_time == 0.0:
+                self.attack_stage_time = self.time  # Use game time instead of wall clock time
                 print("Stage 1: Zerglings staging at furthest friendly base")
+                
+                # Find furthest base from start location
+                if self.townhalls:  # Only try to find furthest base if we have any
+                    furthest_base = max(self.townhalls, key=lambda th: th.position.distance_to(self.start_location))
+                    # Send zerglings to furthest base
+                    for z in not_attacking_zerglings:
+                        z.move(furthest_base.position)
+                else:
+                    # If no bases left, just attack from current position
+                    for z in not_attacking_zerglings:
+                        z.attack(self.enemy_start_locations[0])
             # Stage 2: After 10 seconds, attack main location and update status
-            elif self.attack_staged and self.time - self.attack_stage_time >= 10.0:
+            elif self.attack_stage_time != 0.0 and self.time - self.attack_stage_time >= 10.0:
                 for z in not_attacking_zerglings:
                     z.attack(self.enemy_start_locations[0])
                     self.zergling_attack_status[z.tag] = "attacking"
-                await self.chat_send(f"Attack {self.totalattacks + 1}")  # +1 since we increment after
+                army_supply = self.supply_army
                 self.totalattacks += 1
-                print(f"Main army attack #{self.totalattacks}")
-                self.last_attack_frame = self.time * 22.4
-                self.attack_staged = False
-                self.attack_stage_time = 0.0
+                self.last_attack_frame = self.time * 22.4  # Update last attack frame
+                self.attack_stage_time = 0.0  # Reset attack stage time
+                message = f"Attack #{self.totalattacks} with {army_supply} supply"
+                print(message)
+                await self.chat_send(message)
 
         # Assign workers to gas
         for assimilator in self.gas_buildings.ready:

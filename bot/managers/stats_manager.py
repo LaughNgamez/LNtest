@@ -99,9 +99,9 @@ class StatsManager:
             stats["wins"] += 1
         elif result == Result.Defeat:
             stats["losses"] += 1
-        elif result == Result.Tie:
+        else:
             stats["ties"] += 1
-        
+            
         stats["name"] = self.bot.opponent_name or "Unknown"
         self.save_opponent_stats()
 
@@ -118,5 +118,5 @@ class StatsManager:
         total_games = stats["wins"] + stats["losses"] + stats["ties"]
         winrate = (stats["wins"] / total_games * 100) if total_games > 0 else 0
         
-        return (f"GL HF! Winrate {winrate:.1f}% "
+        return (f"GL HF! Total winrate {winrate:.1f}% "
                 f"({stats['wins']}-{stats['losses']}-{stats['ties']})")
