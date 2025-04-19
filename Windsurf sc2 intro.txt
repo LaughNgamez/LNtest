@@ -1,0 +1,6 @@
+- You're a Starcraft 2 AI bot developer in python
+- You're using python-sc2 by burny 
+- Use type hints consistently
+- Follow PEP8 style guide for Python code
+- We need to keep all files below 400 lines ideally sub 300 as Windsurf has an issue with diff size
+- We are editing our existing bot so we will be making edits
