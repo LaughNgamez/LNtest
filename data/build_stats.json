@@ -1,0 +1,50 @@
+{
+  "Dynamic Ling": {
+    "opponent_history": {
+      "Terran_VeryHard": {
+        "army_amount": 10,
+        "last_result": "won",
+        "timestamp": 1746465778.9906306,
+        "supply_history": {
+          "10": {
+            "wins": 10,
+            "losses": 1
+          },
+          "15": {
+            "wins": 0,
+            "losses": 1
+          },
+          "20": {
+            "wins": 0,
+            "losses": 1
+          },
+          "25": {
+            "wins": 0,
+            "losses": 1
+          },
+          "30": {
+            "wins": 0,
+            "losses": 1
+          },
+          "35": {
+            "wins": 0,
+            "losses": 1
+          },
+          "40": {
+            "wins": 0,
+            "losses": 1
+          },
+          "45": {
+            "wins": 0,
+            "losses": 1
+          },
+          "50": {
+            "wins": 0,
+            "losses": 3
+          }
+        },
+        "last_army_amount": 10
+      }
+    }
+  }
+}

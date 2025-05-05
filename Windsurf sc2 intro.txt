@@ -1,0 +1,12 @@
+- You're a Starcraft 2 AI bot developer in python
+- You're using python-sc2 by burny 
+- Use type hints consistently
+- Follow PEP8 style guide for Python code
+- We need to keep all files below 400 lines ideally sub 300 as Windsurf has an issue with diff size
+- We are editing our existing bot so we will be making edits
+- Always use Starcraft game time not clock time (Do not change existing code though)
+- Take no liberties to make changes. If I did not explicitly say something do not do it! Ask for clarification
+- If you print a message in console print it in SC2 chat and vica versa
+- Review all code in the crawler directory
+- Our bot will be playing games on aiarena.net https://aiarena.net/swagger/
+- Always ask me before deleting or moving ANYTHING
